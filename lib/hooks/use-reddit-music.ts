@@ -43,8 +43,8 @@ export function useRedditMusic() {
     setLoading(true)
     
     try {
-      // Use CORS proxy to bypass Reddit's CORS restrictions
-      // Reddit blocks both serverless functions AND browser CORS
+      // Use our API route as proxy (handles CORS and Reddit blocking)
+      const url = `/api/get/search.json`
       const params = new URLSearchParams()
       params.append("q", query)
       
@@ -56,11 +56,9 @@ export function useRedditMusic() {
       }
       params.append("limit", "100")
 
-      // Use CORS proxy service to fetch Reddit API
-      const redditUrl = `https://old.reddit.com/search.json?${params.toString()}`
-      const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(redditUrl)}`
+      const fullUrl = `${url}?${params.toString()}`
       
-      const response = await fetch(proxyUrl, {
+      const response = await fetch(fullUrl, {
         signal: abortController.signal,
       })
       
@@ -134,8 +132,8 @@ export function useRedditMusic() {
     
     try {
       const subredditString = subreddits.join("+")
-      // Use CORS proxy to bypass Reddit's CORS restrictions
-      // Reddit blocks both serverless functions AND browser CORS
+      // Use our API route as proxy (handles CORS and Reddit blocking)
+      const url = `/api/get/r/${subredditString}/${sortMethod}.json`
       const params = new URLSearchParams()
       
       if (sortMethod === "top") {
@@ -146,11 +144,9 @@ export function useRedditMusic() {
       }
       params.append("limit", "100")
 
-      // Use CORS proxy service to fetch Reddit API
-      const redditUrl = `https://old.reddit.com/r/${subredditString}/${sortMethod}.json${params.toString() ? '?' + params.toString() : ''}`
-      const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(redditUrl)}`
+      const fullUrl = `${url}${params.toString() ? '?' + params.toString() : ''}`
       
-      const response = await fetch(proxyUrl, {
+      const response = await fetch(fullUrl, {
         signal: abortController.signal,
       })
       

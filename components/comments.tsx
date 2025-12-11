@@ -54,11 +54,10 @@ export function Comments({ permalink }: CommentsProps) {
       setError(null)
 
       try {
-        // Use CORS proxy to bypass Reddit's CORS restrictions
-        // Reddit blocks both serverless functions AND browser CORS
-        const redditUrl = `https://old.reddit.com${permalink}.json?sort=${sort}`
-        const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(redditUrl)}`
-        const response = await fetch(proxyUrl, { signal })
+        const response = await fetch(
+          `/api/comments?permalink=${encodeURIComponent(permalink)}&sort=${sort}`,
+          { signal }
+        )
         
         // Check if request was aborted
         if (signal.aborted) return
