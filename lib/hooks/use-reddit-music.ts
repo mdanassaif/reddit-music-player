@@ -43,8 +43,8 @@ export function useRedditMusic() {
     setLoading(true)
     
     try {
-      // Use our API route as proxy (handles CORS and Reddit blocking)
-      const url = `/api/get/search.json`
+      // Fetch directly from Reddit API (allows CORS from browsers)
+      // This bypasses serverless function blocking issues
       const params = new URLSearchParams()
       params.append("q", query)
       
@@ -56,10 +56,12 @@ export function useRedditMusic() {
       }
       params.append("limit", "100")
 
-      const fullUrl = `${url}?${params.toString()}`
+      // Use old.reddit.com for better compatibility
+      const redditUrl = `https://old.reddit.com/search.json?${params.toString()}`
       
-      const response = await fetch(fullUrl, {
+      const response = await fetch(redditUrl, {
         signal: abortController.signal,
+        // Reddit allows CORS from browsers, so no special headers needed
       })
       
       if (abortController.signal.aborted) {
@@ -132,8 +134,8 @@ export function useRedditMusic() {
     
     try {
       const subredditString = subreddits.join("+")
-      // Use our API route as proxy (handles CORS and Reddit blocking)
-      const url = `/api/get/r/${subredditString}/${sortMethod}.json`
+      // Fetch directly from Reddit API (allows CORS from browsers)
+      // This bypasses serverless function blocking issues
       const params = new URLSearchParams()
       
       if (sortMethod === "top") {
@@ -144,10 +146,12 @@ export function useRedditMusic() {
       }
       params.append("limit", "100")
 
-      const fullUrl = `${url}${params.toString() ? '?' + params.toString() : ''}`
+      // Use old.reddit.com for better compatibility
+      const redditUrl = `https://old.reddit.com/r/${subredditString}/${sortMethod}.json${params.toString() ? '?' + params.toString() : ''}`
       
-      const response = await fetch(fullUrl, {
+      const response = await fetch(redditUrl, {
         signal: abortController.signal,
+        // Reddit allows CORS from browsers, so no special headers needed
       })
       
       // Check if request was aborted

@@ -54,10 +54,10 @@ export function Comments({ permalink }: CommentsProps) {
       setError(null)
 
       try {
-        const response = await fetch(
-          `/api/comments?permalink=${encodeURIComponent(permalink)}&sort=${sort}`,
-          { signal }
-        )
+        // Fetch directly from Reddit API (allows CORS from browsers)
+        // This bypasses serverless function blocking issues
+        const redditUrl = `https://old.reddit.com${permalink}.json?sort=${sort}`
+        const response = await fetch(redditUrl, { signal })
         
         // Check if request was aborted
         if (signal.aborted) return
