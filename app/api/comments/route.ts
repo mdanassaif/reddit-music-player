@@ -24,9 +24,19 @@ export async function GET(request: NextRequest) {
 
     const response = await fetch(redditUrl, {
       headers: {
-        "User-Agent": "RedditMusicPlayer/0.6.14 by illyism",
-        "Accept": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/html, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Referer": "https://www.reddit.com/",
+        "Origin": "https://www.reddit.com",
+        "DNT": "1",
+        "Connection": "keep-alive",
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin",
       },
+      redirect: "follow",
     })
 
     if (!response.ok) {

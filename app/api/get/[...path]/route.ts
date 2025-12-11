@@ -55,18 +55,65 @@ export async function GET(
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), 30000) // 30 second timeout
     
-    // Use minimal headers - Reddit blocks overly complex browser-like headers
-    const response = await fetch(redditUrl, {
-      headers: {
-        "User-Agent": "RedditMusicPlayer/0.6.14 by illyism",
-        "Accept": "application/json",
-      },
-      signal: controller.signal,
-    })
+    // Retry logic for Reddit API (sometimes returns 403 on first try)
+    let response: Response | null = null
+    let lastError: any = null
+    
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        if (attempt > 0) {
+          // Wait before retry (exponential backoff)
+          await new Promise(resolve => setTimeout(resolve, attempt * 1000))
+        }
+        
+        // Use browser-like headers to avoid Reddit blocking
+        // Reddit blocks serverless functions, so we need to mimic a browser request
+        response = await fetch(redditUrl, {
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "application/json, text/html, */*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Referer": "https://www.reddit.com/",
+            "Origin": "https://www.reddit.com",
+            "DNT": "1",
+            "Connection": "keep-alive",
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin",
+          },
+          signal: controller.signal,
+          redirect: "follow",
+        })
+        
+        // If successful, break out of retry loop
+        if (response.ok) {
+          break
+        }
+        
+        // If 403, try again (might be rate limiting)
+        if (response.status === 403 && attempt < 2) {
+          console.log(`[Reddit API] 403 on attempt ${attempt + 1}, retrying...`)
+          continue
+        }
+        
+        // For other errors, break
+        break
+      } catch (error) {
+        lastError = error
+        if (attempt === 2) {
+          throw error
+        }
+      }
+    }
+    
+    if (!response) {
+      throw lastError || new Error("Failed to fetch from Reddit API")
+    }
 
     clearTimeout(timeoutId)
 
-    if (!response.ok) {
+    if (!response || !response.ok) {
       const errorText = await response.text()
       console.error(`[Reddit API] Error ${response.status}:`, errorText)
       return NextResponse.json(
