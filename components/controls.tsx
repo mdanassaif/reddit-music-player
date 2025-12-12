@@ -133,10 +133,8 @@ export function Controls() {
   useEffect(() => {
     setSeekingTime(null)
     // Force reset progress bar when song changes
-    if (currentSong) {
-      // The store should already have currentTime: 0 and duration: 0
-      // But we ensure seekingTime is cleared
-    }
+    // The store should already have currentTime: 0 and duration: 0 from setCurrentSong/forward/backward
+    // But we ensure seekingTime is cleared for visual reset
   }, [currentSong?.id])
 
   // Reset seeking time when currentTime updates from player

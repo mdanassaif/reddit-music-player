@@ -96,14 +96,20 @@ export function SoundCloudPlayer({
       })
 
       widgetRef.current.bind(window.SC.Widget.Events.PLAY_PROGRESS, (e: any) => {
-        const time = e.currentPosition / 1000 // Convert milliseconds to seconds
-        onTimeUpdate?.(time)
-        // Also update duration periodically in case it changes
-        widgetRef.current.getDuration((duration: number) => {
-          if (duration > 0 && isFinite(duration)) {
-            onDurationChange?.(duration / 1000) // Convert milliseconds to seconds
+        // Only update if this is still the current song
+        const currentUrl = (window as any).__soundcloudUrl
+        if (currentUrl === song.url) {
+          const time = e.currentPosition / 1000 // Convert milliseconds to seconds
+          if (time >= 0 && isFinite(time)) {
+            onTimeUpdate?.(time)
           }
-        })
+          // Also update duration periodically in case it changes
+          widgetRef.current.getDuration((duration: number) => {
+            if (currentUrl === song.url && duration > 0 && isFinite(duration)) {
+              onDurationChange?.(duration / 1000) // Convert milliseconds to seconds
+            }
+          })
+        }
       })
 
       widgetRef.current.bind(window.SC.Widget.Events.FINISHED, () => {

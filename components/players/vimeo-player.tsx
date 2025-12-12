@@ -126,7 +126,11 @@ export function VimeoPlayer({
       })
 
       playerRef.current.on("timeupdate", (data: any) => {
-        onTimeUpdate?.(data.seconds)
+        // Only update if this is still the current video
+        const currentVideoId = (window as any).__vimeoVideoId
+        if (currentVideoId === videoId && data.seconds >= 0 && isFinite(data.seconds)) {
+          onTimeUpdate?.(data.seconds)
+        }
       })
 
       playerRef.current.on("ended", () => {
@@ -140,7 +144,11 @@ export function VimeoPlayer({
       })
 
       playerRef.current.getDuration().then((duration: number) => {
-        onDurationChange?.(duration)
+        // Only update if this is still the current video
+        const currentVideoId = (window as any).__vimeoVideoId
+        if (currentVideoId === videoId && duration > 0 && isFinite(duration)) {
+          onDurationChange?.(duration)
+        }
       })
     }
 

@@ -169,28 +169,50 @@ export function YouTubePlayer({
     if (!isReady || !playerInstanceRef.current) return
 
     const player = playerInstanceRef.current
+    let intervalId: NodeJS.Timeout | null = null
+    
+    // Reset time and duration when song changes
+    const checkVideoId = () => {
+      try {
+        const playerVideoId = player.getVideoData()?.video_id
+        if (playerVideoId !== videoId) {
+          // Different video, don't update
+          return false
+        }
+        return true
+      } catch (e) {
+        return true // Assume same video if check fails
+      }
+    }
     
     // Update immediately when ready
     try {
-      const currentTime = player.getCurrentTime()
-      const duration = player.getDuration()
-      if (duration > 0) {
-        onDurationChange?.(duration)
-      }
-      if (currentTime > 0) {
-        onTimeUpdate?.(currentTime)
+      if (checkVideoId()) {
+        const currentTime = player.getCurrentTime()
+        const duration = player.getDuration()
+        if (duration > 0 && isFinite(duration)) {
+          onDurationChange?.(duration)
+        }
+        if (currentTime >= 0) {
+          onTimeUpdate?.(currentTime)
+        }
       }
     } catch (e) {
       // Ignore errors
     }
     
     // Update frequently for smooth progress bar (every 100ms)
-    const interval = setInterval(() => {
+    intervalId = setInterval(() => {
       try {
+        if (!checkVideoId()) {
+          return // Don't update if video changed
+        }
         const currentTime = player.getCurrentTime()
         const duration = player.getDuration()
         // Always update time, even if 0 (for initial state)
-        onTimeUpdate?.(currentTime)
+        if (currentTime >= 0 && isFinite(currentTime)) {
+          onTimeUpdate?.(currentTime)
+        }
         // Only update duration if valid
         if (duration > 0 && isFinite(duration)) {
           onDurationChange?.(duration)
@@ -200,8 +222,12 @@ export function YouTubePlayer({
       }
     }, 100) // Update every 100ms for smooth progress bar
 
-    return () => clearInterval(interval)
-  }, [isReady, onTimeUpdate, onDurationChange])
+    return () => {
+      if (intervalId) {
+        clearInterval(intervalId)
+      }
+    }
+  }, [isReady, onTimeUpdate, onDurationChange, videoId])
 
   useEffect(() => {
     if (!isReady || !playerInstanceRef.current) return

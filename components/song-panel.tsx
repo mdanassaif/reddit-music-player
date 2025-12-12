@@ -33,10 +33,19 @@ export function SongPanel({ onClose }: SongPanelProps = {}) {
     seekTo,
   } = usePlaylistStore()
   
-  // Update ref when song changes
+  // Update ref when song changes and reset player state
   useEffect(() => {
-    currentSongIdRef.current = currentSong?.id || null
-  }, [currentSong?.id])
+    const newSongId = currentSong?.id || null
+    const oldSongId = currentSongIdRef.current
+    
+    // If song changed, reset time and duration immediately
+    if (oldSongId !== null && oldSongId !== newSongId) {
+      setCurrentTime(0, newSongId)
+      setDuration(0, newSongId)
+    }
+    
+    currentSongIdRef.current = newSongId
+  }, [currentSong?.id, setCurrentTime, setDuration])
   
   // Create stable callbacks that include song ID
   const handleTimeUpdate = useCallback((time: number) => {
@@ -48,7 +57,7 @@ export function SongPanel({ onClose }: SongPanelProps = {}) {
   
   const handleDurationChange = useCallback((dur: number) => {
     const songId = currentSongIdRef.current
-    if (songId) {
+    if (songId && dur > 0 && isFinite(dur)) {
       setDuration(dur, songId)
     }
   }, [setDuration])
