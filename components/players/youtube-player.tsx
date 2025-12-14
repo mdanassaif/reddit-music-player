@@ -1,267 +1,195 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { Song } from "@/lib/store"
-import { extractYouTubeId } from "@/lib/utils/player-utils"
+import { Song } from "@/lib/store/player-store"
+import { usePlayerStore } from "@/lib/store/player-store"
+import { extractYouTubeId } from "@/lib/utils/song-utils"
 
 declare global {
   interface Window {
     YT: any
     onYouTubeIframeAPIReady: () => void
+    __youtubePlayer?: any
   }
 }
 
 interface YouTubePlayerProps {
   song: Song
-  onStateChange?: (state: number) => void
-  onTimeUpdate?: (currentTime: number) => void
-  onDurationChange?: (duration: number) => void
-  volume?: number
-  isPlaying?: boolean
-  currentTime?: number
 }
 
-export function YouTubePlayer({
-  song,
-  onStateChange,
-  onTimeUpdate,
-  onDurationChange,
-  volume = 100,
-  isPlaying = false,
-  currentTime = 0,
-}: YouTubePlayerProps) {
-  const playerRef = useRef<HTMLDivElement>(null)
-  const playerInstanceRef = useRef<any>(null)
+export function YouTubePlayer({ song }: YouTubePlayerProps) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const playerRef = useRef<any>(null)
+  const videoIdRef = useRef<string | null>(null)
   const [isReady, setIsReady] = useState(false)
-  const lastSeekedTimeRef = useRef<number>(0)
+  const { isPlaying, volume, setCurrentTime, setDuration } = usePlayerStore()
+  
   const videoId = extractYouTubeId(song.url)
 
+  // Initialize YouTube player
   useEffect(() => {
-    if (!videoId) return
+    if (!videoId || !containerRef.current) return
 
-    // Check if player already exists for this video
-    const existingPlayer = (window as any).__youtubePlayer
-    if (existingPlayer && existingPlayer.getVideoData && existingPlayer.getVideoData().video_id === videoId) {
-      // Reuse existing player
-      playerInstanceRef.current = existingPlayer
-      setIsReady(true)
-      // Update volume, time, and playing state
+    let mounted = true
+    let player: any = null
+    let updateInterval: NodeJS.Timeout | null = null
+    videoIdRef.current = videoId
+
+    const initPlayer = () => {
+      if (!window.YT?.Player || !mounted || !containerRef.current) return
+
+      // Clear container before creating new player
+      const container = containerRef.current
+      container.innerHTML = ""
+      
+      // Create new div for player
+      const playerDiv = document.createElement("div")
+      container.appendChild(playerDiv)
+
       try {
-        existingPlayer.setVolume(volume)
-        // Only seek if we're more than 1 second away from target (prevents replay)
-        const currentPos = existingPlayer.getCurrentTime()
-        if (currentTime > 0 && Math.abs(currentPos - currentTime) > 1) {
-          existingPlayer.seekTo(currentTime, true)
-          lastSeekedTimeRef.current = currentTime
-          // Wait a bit for seek to complete before playing
-          setTimeout(() => {
-            if (isPlaying) {
-              existingPlayer.playVideo()
-            } else {
-              existingPlayer.pauseVideo()
-            }
-          }, 100)
-        } else {
-          // Already at correct position, just update play state
-          if (isPlaying) {
-            existingPlayer.playVideo()
-          } else {
-            existingPlayer.pauseVideo()
-          }
-        }
-      } catch (e) {
-        // If reuse fails, create new player
-        createPlayer()
+        player = new window.YT.Player(playerDiv, {
+          videoId,
+          width: "100%",
+          height: "100%",
+          playerVars: {
+            autoplay: 1,  // Always autoplay like original
+            controls: 0,
+            modestbranding: 1,
+            rel: 0,
+          },
+          events: {
+            onReady: (event: any) => {
+              if (!mounted || videoIdRef.current !== videoId) return
+              
+              playerRef.current = event.target
+              window.__youtubePlayer = event.target
+              setIsReady(true)
+              
+              try {
+                event.target.setVolume(volume)
+                event.target.playVideo()
+              } catch (e) {
+                // Silently handle errors
+              }
+
+              // Start update interval
+              updateInterval = setInterval(() => {
+                if (!mounted || !playerRef.current || videoIdRef.current !== videoId) return
+                
+                try {
+                  const time = playerRef.current.getCurrentTime()
+                  const dur = playerRef.current.getDuration()
+                  
+                  if (typeof time === 'number' && time >= 0 && isFinite(time)) {
+                    setCurrentTime(time)
+                  }
+                  if (typeof dur === 'number' && dur > 0 && isFinite(dur)) {
+                    setDuration(dur)
+                  }
+                } catch (e) {
+                  // Ignore errors during cleanup
+                }
+              }, 100)
+            },
+            onStateChange: (event: any) => {
+              if (!mounted || videoIdRef.current !== videoId) return
+              
+              const state = usePlayerStore.getState()
+              
+              // 0 = ended, -1 = unstarted, 1 = playing, 2 = paused, 3 = buffering, 5 = video cued
+              if (event.data === 0) {
+                // Song ended - advance to next
+                state.next()
+              } else if (event.data === 2 && state.isPlaying) {
+                // Paused but should be playing
+                try {
+                  event.target.playVideo()
+                } catch (e) {}
+              }
+            },
+            onError: (event: any) => {
+              console.error("YouTube player error:", event.data)
+            },
+          },
+        })
+      } catch (error) {
+        console.error("YouTube player init error:", error)
       }
-      return
     }
 
-    // Load YouTube IFrame API
+    // Load YouTube API if needed
     if (!window.YT) {
       const tag = document.createElement("script")
       tag.src = "https://www.youtube.com/iframe_api"
-      const firstScriptTag = document.getElementsByTagName("script")[0]
-      firstScriptTag.parentNode?.insertBefore(tag, firstScriptTag)
+      tag.async = true
+      
+      const firstScript = document.getElementsByTagName("script")[0]
+      firstScript.parentNode?.insertBefore(tag, firstScript)
 
-      window.onYouTubeIframeAPIReady = () => {
-        createPlayer()
-      }
+      window.onYouTubeIframeAPIReady = initPlayer
     } else {
-      createPlayer()
+      initPlayer()
     }
 
-    function createPlayer() {
-      if (!playerRef.current || !window.YT) return
+    // Cleanup
+    return () => {
+      mounted = false
+      videoIdRef.current = null
+      setIsReady(false)
+      
+      if (updateInterval) {
+        clearInterval(updateInterval)
+      }
 
-      // Destroy existing player if it's for a different video
-      const existingPlayer = (window as any).__youtubePlayer
-      if (existingPlayer && existingPlayer.getVideoData && existingPlayer.getVideoData().video_id !== videoId) {
+      if (player) {
         try {
-          existingPlayer.destroy()
+          player.stopVideo()
+          player.destroy()
         } catch (e) {
-          // Ignore destroy errors
+          // Silently ignore cleanup errors
         }
-      }
-
-      playerInstanceRef.current = new window.YT.Player(playerRef.current, {
-        videoId,
-        width: "100%",
-        height: "100%",
-        playerVars: {
-          autoplay: 0,
-          controls: 0,
-          modestbranding: 1,
-          rel: 0,
-          showinfo: 0,
-        },
-        events: {
-          onReady: (event: any) => {
-            setIsReady(true)
-            event.target.setVolume(volume)
-            // Store player globally for seek access
-            ;(window as any).__youtubePlayer = event.target
-            // Seek to current time if it's greater than 0 (resume from where we left off)
-            if (currentTime > 0) {
-              event.target.seekTo(currentTime, true)
-              lastSeekedTimeRef.current = currentTime
-              // Wait for seek to complete before playing
-              setTimeout(() => {
-                if (isPlaying) {
-                  event.target.playVideo()
-                }
-              }, 200)
-            } else {
-              // No seeking needed, just play if needed
-              if (isPlaying) {
-                event.target.playVideo()
-              }
-            }
-          },
-          onStateChange: (event: any) => {
-            const state = event.data
-            // YouTube states: -1=unstarted, 0=ended, 1=playing, 2=paused, 3=buffering, 5=cued
-            // Only update playing state for actual play/pause, not buffering or seeking
-            if (state === 1) {
-              onStateChange?.(1) // Playing
-            } else if (state === 2) {
-              onStateChange?.(0) // Paused
-            } else if (state === 0) {
-              // Auto-play next song when video ends
-              const { usePlaylistStore } = require("@/lib/store")
-              const store = usePlaylistStore.getState()
-              if (store.currentIndex < store.songs.length - 1) {
-                store.forward()
-              }
-            }
-            // Ignore buffering (3) and other states to prevent unwanted pauses
-          },
-        },
-      })
-    }
-
-    return () => {
-      // Only destroy if song is actually changing (not just view switching)
-      // We'll handle cleanup when a new song is selected
-    }
-  }, [videoId, currentTime])
-
-  useEffect(() => {
-    if (!isReady || !playerInstanceRef.current) return
-
-    const player = playerInstanceRef.current
-    let intervalId: NodeJS.Timeout | null = null
-    
-    // Reset time and duration when song changes
-    const checkVideoId = () => {
-      try {
-        const playerVideoId = player.getVideoData()?.video_id
-        if (playerVideoId !== videoId) {
-          // Different video, don't update
-          return false
-        }
-        return true
-      } catch (e) {
-        return true // Assume same video if check fails
-      }
-    }
-    
-    // Update immediately when ready
-    try {
-      if (checkVideoId()) {
-      const currentTime = player.getCurrentTime()
-      const duration = player.getDuration()
-        if (duration > 0 && isFinite(duration)) {
-        onDurationChange?.(duration)
-      }
-        if (currentTime >= 0) {
-        onTimeUpdate?.(currentTime)
-        }
-      }
-    } catch (e) {
-      // Ignore errors
-    }
-    
-    // Update frequently for smooth progress bar (every 100ms)
-    intervalId = setInterval(() => {
-      try {
-        if (!checkVideoId()) {
-          return // Don't update if video changed
-        }
-        const currentTime = player.getCurrentTime()
-        const duration = player.getDuration()
-        // Always update time, even if 0 (for initial state)
-        if (currentTime >= 0 && isFinite(currentTime)) {
-        onTimeUpdate?.(currentTime)
-        }
-        // Only update duration if valid
-        if (duration > 0 && isFinite(duration)) {
-          onDurationChange?.(duration)
-        }
-      } catch (e) {
-        // Ignore errors
-      }
-    }, 100) // Update every 100ms for smooth progress bar
-
-    return () => {
-      if (intervalId) {
-        clearInterval(intervalId)
-      }
-    }
-  }, [isReady, onTimeUpdate, onDurationChange, videoId])
-
-  useEffect(() => {
-    if (!isReady || !playerInstanceRef.current) return
-
-    const player = playerInstanceRef.current
-    try {
-      // Don't change play state if we just seeked (let seek handler do it)
-      const currentPos = player.getCurrentTime()
-      const timeSinceSeek = Math.abs(currentPos - lastSeekedTimeRef.current)
-      if (timeSinceSeek < 2) {
-        // Recently seeked, skip this update
-        return
+        player = null
       }
       
-      if (isPlaying) {
-        player.playVideo()
-      } else {
-        player.pauseVideo()
+      playerRef.current = null
+      
+      if (containerRef.current) {
+        containerRef.current.innerHTML = ""
       }
-    } catch (e) {
-      // Ignore errors
     }
-  }, [isPlaying, isReady])
+  }, [videoId])
 
+  // Handle play/pause
   useEffect(() => {
-    if (!isReady || !playerInstanceRef.current) return
+    if (!playerRef.current || videoIdRef.current !== videoId) return
 
-    const player = playerInstanceRef.current
-    try {
-      player.setVolume(volume)
-    } catch (e) {
-      // Ignore errors
+    const tryPlay = () => {
+      try {
+        if (isPlaying) {
+          playerRef.current.playVideo()
+        } else {
+          playerRef.current.pauseVideo()
+        }
+      } catch (e) {
+        // Silently handle errors
+      }
     }
-  }, [volume, isReady])
+
+    if (isReady) {
+      tryPlay()
+    }
+  }, [isPlaying, isReady, videoId])
+
+  // Handle volume
+  useEffect(() => {
+    if (!isReady || !playerRef.current || videoIdRef.current !== videoId) return
+
+    try {
+      playerRef.current.setVolume(volume)
+    } catch (e) {
+      // Ignore
+    }
+  }, [volume, isReady, videoId])
 
   if (!videoId) {
     return (
@@ -271,10 +199,5 @@ export function YouTubePlayer({
     )
   }
 
-  return (
-    <div className="w-full h-full">
-      <div ref={playerRef} className="w-full h-full" />
-    </div>
-  )
+  return <div ref={containerRef} className="w-full h-full" />
 }
-

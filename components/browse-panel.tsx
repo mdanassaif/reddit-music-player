@@ -1,21 +1,16 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { Search, Plus, Share2, ExternalLink } from "lucide-react"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { usePlaylistStore } from "@/lib/store"
-import { useRedditMusic } from "@/lib/hooks/use-reddit-music"
-import { ShareModal } from "@/components/share-modal"
+import { Search, Plus, Share2 } from "lucide-react"
+import { usePlayerStore } from "@/lib/store/player-store"
+import { useRedditAPI } from "@/lib/hooks/use-reddit-api"
 import _ from "lodash"
 
 interface Subreddit {
   name: string
   key: string
   category: string
-  created: number
   subscribers: number
-  title: string
   description: string
 }
 
@@ -24,311 +19,373 @@ export function BrowsePanel() {
   const [searchInput, setSearchInput] = useState("")
   const [customSubreddit, setCustomSubreddit] = useState("")
   const [showShareModal, setShowShareModal] = useState(false)
+  const [copyStatus, setCopyStatus] = useState<'full' | 'short' | null>(null)
+  const [mounted, setMounted] = useState(false)
   
-  const selectedSubreddits = usePlaylistStore((state) => state.selectedSubreddits)
-  const searchQuery = usePlaylistStore((state) => state.searchQuery)
-  const setSelectedSubreddits = usePlaylistStore((state) => state.setSelectedSubreddits)
-  const setSearchQuery = usePlaylistStore((state) => state.setSearchQuery)
-  const { fetchMusicForSubreddits, fetchSearch } = useRedditMusic()
+  const { 
+    selectedSubreddits, 
+    setSelectedSubreddits,
+    searchQuery,
+    setSearchQuery,
+    sortMethod,
+    topPeriod,
+  } = usePlayerStore()
+  const { fetchFromSubreddits, fetchSearch } = useRedditAPI()
 
+  // Fix hydration
   useEffect(() => {
-    // Load subreddits from API
-    fetch("/api/subreddits")
-      .then((res) => res.json())
-      .then((data) => {
-        setSubreddits(data as Subreddit[])
-        // Don't auto-fetch here - let useUrlParams handle initial loading
-        // This prevents hydration mismatches
-      })
-      .catch((err) => console.error("Error loading subreddits:", err))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setMounted(true)
   }, [])
 
-  const handleSubredditClick = async (subreddit: Subreddit) => {
-    const key = subreddit.key.toLowerCase()
-    let newSelected: string[]
-    
-    if (selectedSubreddits.includes(key)) {
-      newSelected = selectedSubreddits.filter((s) => s !== key)
-    } else {
-      newSelected = [...selectedSubreddits, key]
-    }
-    
-    // Smooth state update
+  // Load all subreddits from API
+  useEffect(() => {
+    fetch("/api/subreddits")
+      .then((res) => res.json())
+      .then((data) => setSubreddits(data))
+      .catch((err) => console.error("Failed to load subreddits:", err))
+  }, [])
+
+  const toggleSubreddit = async (key: string) => {
+    const newSelected = selectedSubreddits.includes(key)
+      ? selectedSubreddits.filter((s) => s !== key)
+      : [...selectedSubreddits, key]
+
     setSelectedSubreddits(newSelected)
-    
-    // Fetch music when subreddits change
+
+    // Fetch immediately with current sort settings
     if (newSelected.length > 0) {
-      // Use requestAnimationFrame for smoother transition
-      requestAnimationFrame(() => {
-        fetchMusicForSubreddits(newSelected)
-      })
+      await fetchFromSubreddits(newSelected)
     }
   }
 
-  const handleCustomSubreddit = async () => {
-    const subredditName = customSubreddit.trim().toLowerCase().replace(/^\/?r\//, "")
-    if (subredditName) {
-      // Add custom subreddit if not already selected
-      if (!selectedSubreddits.includes(subredditName)) {
-        const newSelected = [...selectedSubreddits, subredditName]
-        setSelectedSubreddits(newSelected)
-        // Smooth transition
-        requestAnimationFrame(() => {
-          fetchMusicForSubreddits(newSelected)
-        })
-      }
-      setCustomSubreddit("")
-    }
-  }
-
-  const handleRemoveSubreddit = async (subredditKey: string) => {
-    const newSelected = selectedSubreddits.filter((s) => s !== subredditKey)
+  const removeSubreddit = async (key: string) => {
+    const newSelected = selectedSubreddits.filter((s) => s !== key)
     setSelectedSubreddits(newSelected)
-    
-    // Fetch music when subreddits change
+
+    // Fetch if there are still subreddits selected
     if (newSelected.length > 0) {
-      await fetchMusicForSubreddits(newSelected)
-    } else {
-      // If no subreddits selected, default to listentothis
-      const defaultSelected = ["listentothis"]
-      setSelectedSubreddits(defaultSelected)
-      await fetchMusicForSubreddits(defaultSelected)
+      await fetchFromSubreddits(newSelected)
     }
   }
 
   const handleSearch = async () => {
     const query = searchInput.trim()
-    if (query.length < 3) {
-      return // Minimum 3 characters for search
-    }
-    
-    // Set search query in store
+    if (query.length < 3) return
+
     setSearchQuery(query)
-    
-    // Clear selected subreddits when searching
     setSelectedSubreddits([])
-    
-    // Fetch search results
     await fetchSearch(query)
   }
 
-  const groupedSubreddits = _.groupBy(
-    _.sortBy(subreddits, "category"),
-    "category"
-  )
+  const addCustomSubreddit = async () => {
+    const name = customSubreddit.trim().toLowerCase().replace(/^\/?r\//, "")
+    
+    // Validate name
+    if (!name) {
+      setCustomSubreddit("")
+      return
+    }
+    
+    // Check if already selected
+    if (selectedSubreddits.includes(name)) {
+      alert(`r/${name} is already in your playlist!`)
+      setCustomSubreddit("")
+      return
+    }
+
+    // Add to selected
+    const newSelected = [...selectedSubreddits, name]
+    setSelectedSubreddits(newSelected)
+    setCustomSubreddit("")
+    
+    // Fetch songs from this subreddit
+    try {
+      await fetchFromSubreddits(newSelected)
+    } catch (error) {
+      console.error(`Failed to fetch from r/${name}:`, error)
+      // Remove if fetch fails
+      setSelectedSubreddits(selectedSubreddits)
+      alert(`Could not load r/${name}. Please check the subreddit name.`)
+    }
+  }
+
+  const handleShare = () => {
+    setShowShareModal(true)
+    setCopyStatus(null)
+  }
+
+  const getShareUrls = () => {
+    const subs = selectedSubreddits.join('+')
+    const params = new URLSearchParams()
+    if (subs) params.append('r', subs)
+    if (sortMethod !== 'hot') params.append('sort', sortMethod)
+    if (sortMethod === 'top' && topPeriod !== 'week') params.append('t', topPeriod)
+    
+    const queryString = params.toString()
+    const fullUrl = `https://reddit.musicplayer.io${queryString ? `?${queryString}` : ''}`
+    const shortUrl = `http://r.il.ly/r/${subs}${queryString ? `?${params.toString()}` : ''}`
+    
+    return { fullUrl, shortUrl }
+  }
+
+  const copyToClipboard = async (text: string, type: 'full' | 'short') => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopyStatus(type)
+      setTimeout(() => setCopyStatus(null), 2000)
+    } catch (err) {
+      console.error('Failed to copy:', err)
+    }
+  }
+
+  const { fullUrl, shortUrl } = getShareUrls()
+
+  // Group subreddits by category
+  const groupedSubreddits = _.groupBy(subreddits, "category")
 
   return (
-    <div className="content-browse p-5 md:p-6 smooth-scroll overflow-y-auto h-full bg-[#111111]">
-      {/* Header - Enhanced */}
-      <div className="flex items-center gap-3 mb-6 md:mb-8">
-        <div className="p-2 bg-[#FDC00F]/10 rounded-lg">
-          <svg className="w-5 h-5 text-[#FDC00F]" fill="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-            <path d="M3 13V5q0-.825.588-1.413T5 3h6v10H3ZM13 3h6q.825 0 1.413.588T21 5v4h-8V3Zm0 18V11h8v8q0 .825-.588 1.413T19 21h-6ZM3 15h8v6H5q-.825 0-1.413-.588T3 19v-4Z"/>
-          </svg>
+    <div className="flex flex-col h-full bg-card">
+      {/* Header */}
+      <div className="p-6 border-b border-border">
+        <div className="mb-4">
+          <h2 className="text-xl font-bold">Browse Subreddits</h2>
         </div>
-        <div>
-          <h1 className="text-base md:text-lg font-bold text-white">Browse Subreddits</h1>
-          <p className="text-xs text-gray-500">Discover music communities</p>
-        </div>
-      </div>
 
-      {/* Search Input - Enhanced */}
-      <div className="flex gap-2 mb-6 md:mb-8">
-        <div className="flex-1 relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 pointer-events-none" />
-          <Input
+        {/* Search */}
+        <div className="flex gap-2">
+          <input
             type="text"
             placeholder="Search Reddit..."
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
-            onKeyPress={(e) => e.key === "Enter" && handleSearch()}
-            className="w-full pl-10 bg-white/5 border-white/10 text-white placeholder:text-gray-500 focus:bg-white/8 focus:border-[#FDC00F]/50 focus-visible:ring-2 focus-visible:ring-[#FDC00F]/30 focus-visible:ring-offset-0 transition-all duration-200"
+            onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+            className="flex-1 px-4 py-2.5 bg-secondary border-0 rounded-lg text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
           />
-        </div>
-        <Button
-          onClick={handleSearch}
-          size="sm"
-          className="bg-[#FDC00F] hover:bg-[#f99b1d] text-black font-semibold px-4 shadow-lg shadow-[#FDC00F]/20 hover:shadow-[#FDC00F]/40 transition-all duration-200"
-        >
-          <Search className="w-4 h-4" />
-        </Button>
-      </div>
-
-      {/* My Subreddit Playlist - Clean */}
-      <div className="mb-8 p-4 bg-[#181818] rounded-lg border border-white/5 hover:border-white/10 transition-colors relative">
-        <div className="flex items-start justify-between mb-4 pr-2">
-          <div className="flex-1 min-w-0">
-            <div className="text-sm font-semibold text-white mb-0.5">
-              {searchQuery ? `Search: ${searchQuery}` : "My Subreddit Playlist"}
-            </div>
-            {selectedSubreddits.length > 0 && !searchQuery && (
-              <div className="text-xs text-gray-500">
-                {selectedSubreddits.length} {selectedSubreddits.length === 1 ? 'subreddit' : 'subreddits'} selected
-              </div>
-            )}
-          </div>
-        {selectedSubreddits.length > 0 && !searchQuery && (
           <button
-            onClick={() => setShowShareModal(true)}
-            className="absolute -top-2 -right-2 w-8 h-8 bg-[#111111] rounded-lg border border-white/10 hover:border-[#FDC00F]/40 flex items-center justify-center text-gray-400 hover:text-[#FDC00F] transition-all duration-200 shadow-lg hover:shadow-[#FDC00F]/20 z-10"
-            title="Share"
+            onClick={handleSearch}
+            className="px-4 py-2.5 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" className="w-4 h-4">
-              <path fill="currentColor" d="M15.991 1.035a4 4 0 1 1-.855 6.267l-6.28 3.626a4.007 4.007 0 0 1 0 2.144l6.28 3.626a4.002 4.002 0 0 1 6.32 4.803a4 4 0 0 1-7.32-3.07l-6.28-3.627a4.002 4.002 0 1 1 0-5.608l6.28-3.626a4.002 4.002 0 0 1 1.855-4.535ZM19.723 3.5a2 2 0 1 0-3.464 2a2 2 0 0 0 3.464-2ZM3.071 12.527a2.002 2.002 0 0 0 2.93 1.204a2 2 0 1 0-2.93-1.204Zm15.92 5.242a2 2 0 1 0-2 3.464a2 2 0 0 0 2-3.464Z"/>
-            </svg>
+            <Search className="h-4 w-4" />
           </button>
-        )}
-          {searchQuery && (
-            <Button
-              onClick={() => {
-                setSearchQuery(null)
-                if (selectedSubreddits.length > 0) {
-                  fetchMusicForSubreddits(selectedSubreddits)
-                }
-              }}
-              size="sm"
-              variant="ghost"
-              className="text-gray-400 hover:text-white h-8 w-8 p-0 flex-shrink-0"
-              title="Clear"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </Button>
-          )}
         </div>
-        {searchQuery ? (
-          <p className="text-xs text-gray-500">
-            Showing results for: <span className="text-white">{searchQuery}</span>
-          </p>
-        ) : selectedSubreddits.length === 0 ? (
-          <p className="text-xs text-gray-500">
-            Select subreddits below to build your playlist
-          </p>
-        ) : (
-          <div className="space-y-1">
-            {selectedSubreddits.map((subKey, index) => {
-              const subreddit = subreddits.find((s) => s.key.toLowerCase() === subKey)
-              return (
-                <div
-                  key={subKey}
-                  className="flex items-center justify-between px-3 py-2 bg-[#181818] rounded-md border border-white/5 hover:bg-[#222222] hover:border-white/10 group transition-all duration-300 ease-out"
-                  style={{ 
-                    animation: `fadeInSlide 0.3s ease-out ${index * 50}ms both`
-                  }}
+      </div>
+
+      {/* My Subreddit Playlist */}
+      <div className="p-6 border-b border-border bg-secondary/30">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h3 className="text-base font-bold mb-1">My Subreddit Playlist</h3>
+            <p className="text-xs text-muted-foreground">
+              {mounted ? `${selectedSubreddits.length} subreddit${selectedSubreddits.length !== 1 ? 's' : ''} selected` : 'Loading...'}
+            </p>
+          </div>
+          <button
+            onClick={handleShare}
+            className="p-2 hover:bg-secondary rounded-lg transition-colors"
+            title="Share Playlist"
+          >
+            <Share2 className="h-4 w-4" />
+          </button>
+        </div>
+
+        {selectedSubreddits.length > 0 ? (
+          <div className="space-y-2 mb-4">
+            {selectedSubreddits.map((sub) => (
+              <div
+                key={sub}
+                className="flex items-center justify-between px-4 py-2.5 bg-secondary rounded-lg"
+              >
+                <span className="text-sm font-medium">{sub}</span>
+                <button
+                  onClick={() => toggleSubreddit(sub)}
+                  className="text-xs text-muted-foreground hover:text-foreground"
                 >
-                  <span className="text-sm text-white font-medium transition-all duration-300">/r/{subKey}</span>
-                  <Button
-                    onClick={() => handleRemoveSubreddit(subKey)}
-                    variant="ghost"
-                    size="icon"
-                    className="text-gray-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all duration-300 p-1 h-auto w-auto active:scale-95"
-                    title="Remove"
-                  >
-                    <svg className="w-4 h-4 transition-transform duration-300 group-hover:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </Button>
-                </div>
-              )
-            })}
+                  Remove
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="py-8 text-center text-sm text-muted-foreground">
+            No subreddits selected
           </div>
         )}
+
+        {/* Add Custom Subreddit */}
+        <div className="flex gap-2 items-center">
+          <div className="px-3 h-11 bg-[#1a1a1a] rounded-lg flex items-center justify-center text-sm font-medium text-gray-400 border border-white/10 flex-shrink-0">
+            /r/
+          </div>
+          <input
+            type="text"
+            placeholder="custom-subreddit"
+            value={customSubreddit}
+            onChange={(e) => setCustomSubreddit(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && addCustomSubreddit()}
+            className="flex-1 min-w-0 px-3 h-11 bg-[#1a1a1a] border border-white/10 rounded-lg text-sm text-gray-300 placeholder:text-gray-600 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+          />
+          <button
+            onClick={addCustomSubreddit}
+            className="h-11 w-11 flex items-center justify-center bg-[#FDC00F] text-black rounded-lg hover:bg-[#f99b1d] transition-colors flex-shrink-0"
+          >
+            <Plus className="h-5 w-5" />
+          </button>
+        </div>
       </div>
 
-      {/* Custom Subreddit Input - Enhanced */}
-      <div className="flex gap-0 mb-8">
-        <span className="flex items-center px-3 bg-white/5 border border-r-0 border-white/10 text-gray-400 text-sm rounded-l-md transition-colors duration-200">
-          /r/
-        </span>
-        <Input
-          type="text"
-          placeholder="custom-subreddit"
-          value={customSubreddit}
-          onChange={(e) => setCustomSubreddit(e.target.value)}
-          onKeyPress={(e) => e.key === "Enter" && handleCustomSubreddit()}
-          className="flex-1 bg-white/5 border-white/10 text-white placeholder:text-gray-500 rounded-none focus:bg-white/8 focus:border-[#FDC00F]/50 focus-visible:ring-2 focus-visible:ring-[#FDC00F]/30 focus-visible:ring-offset-0 transition-all duration-200"
-        />
-        <Button
-          onClick={handleCustomSubreddit}
-          size="sm"
-          className="bg-[#FDC00F] hover:bg-[#f99b1d] text-black rounded-l-none rounded-r-md px-4 font-semibold shadow-lg shadow-[#FDC00F]/20 hover:shadow-[#FDC00F]/40 transition-all duration-300 ease-out active:scale-95 hover:scale-105 group"
-        >
-          <Plus className="w-4 h-4 transition-transform duration-300 group-hover:rotate-90" />
-        </Button>
-      </div>
-
-      {/* Subreddit Categories - Clean Professional Design */}
-      <div className="space-y-12">
-        {Object.entries(groupedSubreddits).map(([category, subs], categoryIndex) => {
-          return (
-            <div
-              key={category}
-              className="subreddit-category"
-              data-category={_.camelCase(category)}
-            >
-              {/* Category Header - Clean Two-Line Design */}
-              <div className="mb-4">
-                <div className="mb-2">
-                  <h2 className="text-base font-semibold text-white tracking-tight mb-0.5">
-                    {category}
-                  </h2>
-                  <p className="text-xs text-gray-500">
-                    {subs.length} {subs.length === 1 ? 'subreddit' : 'subreddits'}
-                  </p>
-                </div>
-                <div className="h-px bg-white/5" />
-              </div>
-              
-              {/* Category Content - Clean List */}
-              <div className="space-y-1">
-                {_.sortBy(subs, "name").map((sub) => {
-                  const isActive = selectedSubreddits.includes(sub.key.toLowerCase())
-                  return (
-                    <Button
-                      key={sub.key}
-                      onClick={() => handleSubredditClick(sub)}
-                      variant="ghost"
-                      className={`w-full flex items-center justify-between px-3 py-2.5 text-left text-sm rounded-md transition-all duration-300 ease-out group h-auto active:scale-[0.98] ${
-                        isActive
-                          ? "bg-[#FDC00F]/10 text-[#FDC00F] border border-[#FDC00F]/30 hover:bg-[#FDC00F]/15 hover:text-[#FDC00F] hover:border-[#FDC00F]/40 shadow-sm shadow-[#FDC00F]/10 scale-[1.02]"
-                          : "text-gray-300 hover:bg-white/5 hover:text-white hover:border-white/10 border border-transparent hover:scale-[1.01]"
-                      }`}
-                      data-value={sub.key.toLowerCase()}
-                      data-name={sub.name}
-                      data-category={sub.category}
-                      data-created={sub.created}
-                      data-subscribers={sub.subscribers}
-                      data-title={sub.title}
-                      data-content={sub.description}
-                    >
-                      <span className="font-medium truncate transition-all duration-300">{sub.name}</span>
-                      <div className={`flex items-center justify-center w-5 h-5 rounded-full flex-shrink-0 ml-2 transition-all duration-300 ease-out ${
-                        isActive 
-                          ? "bg-[#FDC00F]/20 text-[#FDC00F] scale-110 shadow-sm shadow-[#FDC00F]/20" 
-                          : "bg-white/5 text-gray-500 group-hover:bg-white/10 group-hover:text-[#FDC00F] group-hover:scale-105"
-                      }`}>
-                        <Plus className={`w-3.5 h-3.5 transition-all duration-300 ease-out ${
-                          isActive ? "rotate-45 scale-110" : "rotate-0"
-                        }`} />
-                      </div>
-                    </Button>
-                  )
-                })}
-              </div>
+      {/* Subreddit List */}
+      <div className="flex-1 overflow-y-auto pb-24">
+        {Object.entries(groupedSubreddits).map(([category, subs]) => (
+          <div key={category} className="border-b border-border last:border-0">
+            {/* Category Header - More Prominent */}
+            <div className="sticky top-0 z-10 px-6 py-3 bg-primary/10 border-l-4 border-primary backdrop-blur-sm">
+              <h4 className="text-sm font-bold text-primary uppercase tracking-wide">{category}</h4>
+              <p className="text-xs text-muted-foreground">{subs.length} subreddits</p>
             </div>
-          )
-        })}
+
+            {/* Subreddits */}
+            <div>
+              {subs.map((sub) => {
+                const isSelected = selectedSubreddits.includes(sub.key)
+                return (
+                  <button
+                    key={sub.key}
+                    onClick={() => toggleSubreddit(sub.key)}
+                    className={`w-full flex items-center justify-between px-6 py-3 hover:bg-secondary/50 transition-colors ${
+                      isSelected ? 'bg-primary/10' : ''
+                    }`}
+                  >
+                    <div className="flex-1 text-left">
+                      <div className="text-sm font-medium">{sub.name}</div>
+                      {sub.subscribers && (
+                        <div className="text-xs text-muted-foreground">
+                          {sub.subscribers.toLocaleString()} members
+                        </div>
+                      )}
+                    </div>
+                    {isSelected ? (
+                      <div className="text-xs text-primary font-medium">✓</div>
+                    ) : (
+                      <Plus className="h-4 w-4 text-muted-foreground" />
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        ))}
       </div>
 
       {/* Share Modal */}
-      <ShareModal
-        isOpen={showShareModal}
-        onClose={() => setShowShareModal(false)}
-        subreddits={selectedSubreddits}
-      />
+      {showShareModal && (
+        <div
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+          onClick={() => setShowShareModal(false)}
+        >
+          <div
+            className="bg-card rounded-lg p-6 max-w-2xl w-full border border-border"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-xl font-bold">Share Your Subreddit Playlist</h3>
+              <button
+                onClick={() => setShowShareModal(false)}
+                className="p-2 hover:bg-secondary rounded-md transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Full URL */}
+            <div className="mb-4">
+              <label className="block text-sm font-bold mb-2">Full URL</label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={fullUrl}
+                  readOnly
+                  className="flex-1 px-4 py-3 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+                <button
+                  onClick={() => copyToClipboard(fullUrl, 'full')}
+                  className="px-4 py-3 bg-secondary hover:bg-secondary/80 rounded-lg text-sm font-medium transition-colors"
+                >
+                  {copyStatus === 'full' ? '✓ Copied' : 'Copy'}
+                </button>
+              </div>
+            </div>
+
+            {/* Short URL */}
+            <div className="mb-6">
+              <label className="block text-sm font-bold mb-2">Short URL</label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={shortUrl}
+                  readOnly
+                  className="flex-1 px-4 py-3 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+                <button
+                  onClick={() => copyToClipboard(shortUrl, 'short')}
+                  className="px-4 py-3 bg-secondary hover:bg-secondary/80 rounded-lg text-sm font-medium transition-colors"
+                >
+                  {copyStatus === 'short' ? '✓ Copied' : 'Copy'}
+                </button>
+              </div>
+            </div>
+
+            {/* Social Share Buttons */}
+            <div className="flex items-center gap-3">
+              <a
+                href={`https://plus.google.com/share?url=${encodeURIComponent(fullUrl)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center justify-center w-12 h-12 bg-red-600 hover:bg-red-700 rounded-lg transition-colors"
+                title="Share on Google+"
+              >
+                <svg className="w-6 h-6 text-white" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M7 11v2.4h3.97c-.16 1.029-1.2 3.02-3.97 3.02-2.39 0-4.34-1.979-4.34-4.42 0-2.44 1.95-4.42 4.34-4.42 1.36 0 2.27.58 2.79 1.08l1.9-1.83C10.47 5.69 8.89 5 7 5c-3.87 0-7 3.13-7 7s3.13 7 7 7c4.04 0 6.721-2.84 6.721-6.84 0-.46-.051-.81-.111-1.16H7zm0 0l17 2h-3v3h-2v-3h-3v-2h3V8h2v3h3v2z"/>
+                </svg>
+              </a>
+              <a
+                href={`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(fullUrl)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center justify-center w-12 h-12 bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+                title="Share on Facebook"
+              >
+                <svg className="w-6 h-6 text-white" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
+                </svg>
+              </a>
+              <a
+                href={`https://twitter.com/intent/tweet?url=${encodeURIComponent(fullUrl)}&text=${encodeURIComponent('Check out this music playlist!')}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center justify-center w-12 h-12 bg-sky-500 hover:bg-sky-600 rounded-lg transition-colors"
+                title="Share on Twitter"
+              >
+                <svg className="w-6 h-6 text-white" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M23.953 4.57a10 10 0 01-2.825.775 4.958 4.958 0 002.163-2.723c-.951.555-2.005.959-3.127 1.184a4.92 4.92 0 00-8.384 4.482C7.69 8.095 4.067 6.13 1.64 3.162a4.822 4.822 0 00-.666 2.475c0 1.71.87 3.213 2.188 4.096a4.904 4.904 0 01-2.228-.616v.06a4.923 4.923 0 003.946 4.827 4.996 4.996 0 01-2.212.085 4.936 4.936 0 004.604 3.417 9.867 9.867 0 01-6.102 2.105c-.39 0-.779-.023-1.17-.067a13.995 13.995 0 007.557 2.209c9.053 0 13.998-7.496 13.998-13.985 0-.21 0-.42-.015-.63A9.935 9.935 0 0024 4.59z"/>
+                </svg>
+              </a>
+              <a
+                href={`https://reddit.com/submit?url=${encodeURIComponent(fullUrl)}&title=${encodeURIComponent('Check out this music playlist!')}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center justify-center w-12 h-12 bg-orange-600 hover:bg-orange-700 rounded-lg transition-colors"
+                title="Share on Reddit"
+              >
+                <svg className="w-6 h-6 text-white" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M12 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0zm5.01 4.744c.688 0 1.25.561 1.25 1.249a1.25 1.25 0 0 1-2.498.056l-2.597-.547-.8 3.747c1.824.07 3.48.632 4.674 1.488.308-.309.73-.491 1.207-.491.968 0 1.754.786 1.754 1.754 0 .716-.435 1.333-1.01 1.614a3.111 3.111 0 0 1 .042.52c0 2.694-3.13 4.87-7.004 4.87-3.874 0-7.004-2.176-7.004-4.87 0-.183.015-.366.043-.534A1.748 1.748 0 0 1 4.028 12c0-.968.786-1.754 1.754-1.754.463 0 .898.196 1.207.49 1.207-.883 2.878-1.43 4.744-1.487l.885-4.182a.342.342 0 0 1 .14-.197.35.35 0 0 1 .238-.042l2.906.617a1.214 1.214 0 0 1 1.108-.701zM9.25 12C8.561 12 8 12.562 8 13.25c0 .687.561 1.248 1.25 1.248.687 0 1.248-.561 1.248-1.249 0-.688-.561-1.249-1.249-1.249zm5.5 0c-.687 0-1.248.561-1.248 1.25 0 .687.561 1.248 1.249 1.248.688 0 1.249-.561 1.249-1.249 0-.687-.562-1.249-1.25-1.249zm-5.466 3.99a.327.327 0 0 0-.231.094.33.33 0 0 0 0 .463c.842.842 2.484.913 2.961.913.477 0 2.105-.056 2.961-.913a.361.361 0 0 0 .029-.463.33.33 0 0 0-.464 0c-.547.533-1.684.73-2.512.73-.828 0-1.979-.196-2.512-.73a.326.326 0 0 0-.232-.095z"/>
+                </svg>
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
-

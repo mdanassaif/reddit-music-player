@@ -1,6 +1,7 @@
+// components/song-panel.tsx
 "use client"
 
-import { useState, useCallback, useRef, useEffect } from "react"
+import { useState } from "react"
 import { Music, ArrowUp, ArrowDown, ExternalLink, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
@@ -20,38 +21,6 @@ interface SongPanelProps {
 
 export function SongPanel({ onClose }: SongPanelProps = {}) {
   const currentSong = usePlaylistStore((state) => state.currentSong)
-  const currentSongIdRef = useRef<string | null>(null)
-  const {
-    isPlaying,
-    currentTime,
-    duration,
-    volume,
-    setIsPlaying,
-    setCurrentTime,
-    setDuration,
-    setVolume,
-    seekTo,
-  } = usePlaylistStore()
-  
-  // Update ref when song changes
-  useEffect(() => {
-    currentSongIdRef.current = currentSong?.id || null
-  }, [currentSong?.id])
-  
-  // Create stable callbacks that include song ID
-  const handleTimeUpdate = useCallback((time: number) => {
-    const songId = currentSongIdRef.current
-    if (songId) {
-      setCurrentTime(time, songId)
-    }
-  }, [setCurrentTime])
-  
-  const handleDurationChange = useCallback((dur: number) => {
-    const songId = currentSongIdRef.current
-    if (songId) {
-      setDuration(dur, songId)
-    }
-  }, [setDuration])
   const { isAuthenticated, login } = useAuth()
   const addMessage = useStore((state) => state.addMessage)
   const [voteDirection, setVoteDirection] = useState<number>(0)
@@ -203,41 +172,17 @@ export function SongPanel({ onClose }: SongPanelProps = {}) {
       <div className="mb-8">
         {currentSong.type === "youtube" && (
           <div className="aspect-video bg-black rounded-xl overflow-hidden shadow-2xl ring-1 ring-white/10" style={{ boxShadow: '0 0 40px rgba(253, 192, 15, 0.15), 0 0 80px rgba(253, 192, 15, 0.08), 0 20px 40px rgba(0, 0, 0, 0.5)' }}>
-            <YouTubePlayer
-              song={currentSong}
-              isPlaying={isPlaying}
-              volume={volume}
-              currentTime={currentTime}
-              onStateChange={(state) => setIsPlaying(state === 1)}
-              onTimeUpdate={handleTimeUpdate}
-              onDurationChange={handleDurationChange}
-            />
+            <YouTubePlayer song={currentSong} />
           </div>
         )}
         {currentSong.type === "soundcloud" && (
           <div className="aspect-video bg-black rounded-xl overflow-hidden shadow-2xl ring-1 ring-white/10" style={{ boxShadow: '0 0 40px rgba(253, 192, 15, 0.15), 0 0 80px rgba(253, 192, 15, 0.08), 0 20px 40px rgba(0, 0, 0, 0.5)' }}>
-            <SoundCloudPlayer
-              song={currentSong}
-              isPlaying={isPlaying}
-              volume={volume}
-              currentTime={currentTime}
-              onStateChange={setIsPlaying}
-              onTimeUpdate={handleTimeUpdate}
-              onDurationChange={handleDurationChange}
-            />
+            <SoundCloudPlayer song={currentSong} />
           </div>
         )}
         {currentSong.type === "vimeo" && (
           <div className="aspect-video bg-black rounded-xl overflow-hidden shadow-2xl ring-1 ring-white/10" style={{ boxShadow: '0 0 40px rgba(253, 192, 15, 0.15), 0 0 80px rgba(253, 192, 15, 0.08), 0 20px 40px rgba(0, 0, 0, 0.5)' }}>
-            <VimeoPlayer
-              song={currentSong}
-              isPlaying={isPlaying}
-              volume={volume}
-              currentTime={currentTime}
-              onStateChange={setIsPlaying}
-              onTimeUpdate={handleTimeUpdate}
-              onDurationChange={handleDurationChange}
-            />
+            <VimeoPlayer song={currentSong} />
           </div>
         )}
         {currentSong.type === "mp3" && (
@@ -258,16 +203,7 @@ export function SongPanel({ onClose }: SongPanelProps = {}) {
               </div>
             )}
             <div className="absolute inset-0 flex items-center justify-center">
-              <MP3Player
-                song={currentSong}
-                isPlaying={isPlaying}
-                volume={volume}
-                currentTime={currentTime}
-                onStateChange={setIsPlaying}
-                onTimeUpdate={handleTimeUpdate}
-                onDurationChange={handleDurationChange}
-                onSeek={seekTo}
-              />
+              <MP3Player song={currentSong} />
             </div>
           </div>
         )}

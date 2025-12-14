@@ -1,197 +1,153 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { Song } from "@/lib/store"
-import { extractVimeoId } from "@/lib/utils/player-utils"
+import { Song } from "@/lib/store/player-store"
+import { usePlayerStore } from "@/lib/store/player-store"
+import { extractVimeoId } from "@/lib/utils/song-utils"
+
+declare global {
+  interface Window {
+    Vimeo: any
+    __vimeoPlayer?: any
+  }
+}
 
 interface VimeoPlayerProps {
   song: Song
-  onStateChange?: (isPlaying: boolean) => void
-  onTimeUpdate?: (currentTime: number) => void
-  onDurationChange?: (duration: number) => void
-  volume?: number
-  isPlaying?: boolean
-  currentTime?: number
 }
 
-export function VimeoPlayer({
-  song,
-  onStateChange,
-  onTimeUpdate,
-  onDurationChange,
-  volume = 100,
-  isPlaying = false,
-  currentTime = 0,
-}: VimeoPlayerProps) {
+export function VimeoPlayer({ song }: VimeoPlayerProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const playerRef = useRef<any>(null)
+  const videoIdRef = useRef<string | null>(null)
   const [isReady, setIsReady] = useState(false)
-  const lastSeekedTimeRef = useRef<number>(0)
+  const { isPlaying, volume, setCurrentTime, setDuration } = usePlayerStore()
+
   const videoId = extractVimeoId(song.url)
 
   useEffect(() => {
-    if (!videoId) return
+    if (!videoId || !iframeRef.current) return
 
-    // Check if player already exists for this video
-    const existingPlayer = (window as any).__vimeoPlayer
-    const existingVideoId = (window as any).__vimeoVideoId
-    if (existingPlayer && existingVideoId === videoId) {
-      // Reuse existing player
-      playerRef.current = existingPlayer
-      setIsReady(true)
-      // Update volume, time, and playing state
+    let mounted = true
+    let player: any = null
+    videoIdRef.current = videoId
+
+    const initPlayer = () => {
+      if (!window.Vimeo || !mounted || !iframeRef.current) return
+
       try {
-        existingPlayer.setVolume(volume / 100)
-        // Check current position before seeking
-        existingPlayer.getCurrentTime().then((currentPos: number) => {
-          // Only seek if we're more than 1 second away from target (prevents replay)
-          if (currentTime > 0 && Math.abs(currentPos - currentTime) > 1) {
-            existingPlayer.setCurrentTime(currentTime).then(() => {
-              lastSeekedTimeRef.current = currentTime
-              // Wait a bit for seek to complete before playing
-              setTimeout(() => {
-                if (isPlaying) {
-                  existingPlayer.play()
-                } else {
-                  existingPlayer.pause()
-                }
-              }, 100)
-            })
-          } else {
-            // Already at correct position, just update play state
-            if (isPlaying) {
-              existingPlayer.play()
-            } else {
-              existingPlayer.pause()
+        player = new window.Vimeo.Player(iframeRef.current)
+        playerRef.current = player
+        window.__vimeoPlayer = player
+
+        player.ready().then(() => {
+          if (!mounted || videoIdRef.current !== videoId) return
+          
+          setIsReady(true)
+          
+          try {
+            player.setVolume(volume / 100)
+          } catch (e) {
+            console.error("Vimeo volume error:", e)
+          }
+
+          player.on("timeupdate", (data: any) => {
+            if (!mounted || videoIdRef.current !== videoId) return
+            
+            try {
+              if (data?.seconds && typeof data.seconds === 'number') {
+                setCurrentTime(data.seconds)
+              }
+            } catch (e) {
+              // Ignore
             }
+          })
+
+          player.getDuration().then((dur: number) => {
+            if (!mounted || videoIdRef.current !== videoId) return
+            
+            try {
+              if (dur > 0 && isFinite(dur)) {
+                setDuration(dur)
+              }
+            } catch (e) {
+              // Ignore
+            }
+          })
+
+          player.on("ended", () => {
+            if (!mounted || videoIdRef.current !== videoId) return
+            const state = usePlayerStore.getState()
+            state.next()
+          })
+
+          if (isPlaying) {
+            player.play().catch(() => {})
           }
         })
-      } catch (e) {
-        // If reuse fails, create new player
-        initializePlayer()
+
+        player.on("error", (e: any) => {
+          console.error("Vimeo error:", e)
+        })
+      } catch (error) {
+        console.error("Vimeo init error:", error)
       }
-      return
     }
 
-    // Load Vimeo Player API
     if (!window.Vimeo) {
       const script = document.createElement("script")
       script.src = "https://player.vimeo.com/api/player.js"
       script.async = true
+      script.onload = initPlayer
       document.body.appendChild(script)
-
-      script.onload = () => {
-        initializePlayer()
-      }
     } else {
-      initializePlayer()
-    }
-
-    function initializePlayer() {
-      if (!iframeRef.current || !window.Vimeo) return
-
-      playerRef.current = new window.Vimeo.Player(iframeRef.current)
-
-      playerRef.current.ready().then(() => {
-        setIsReady(true)
-        playerRef.current.setVolume(volume / 100)
-        // Store player globally for seek access
-        ;(window as any).__vimeoPlayer = playerRef.current
-        ;(window as any).__vimeoVideoId = videoId
-        // Seek to current time if it's greater than 0 (resume from where we left off)
-        if (currentTime > 0) {
-          playerRef.current.setCurrentTime(currentTime).then(() => {
-            lastSeekedTimeRef.current = currentTime
-            // Wait for seek to complete before playing
-            setTimeout(() => {
-              if (isPlaying) {
-                playerRef.current.play()
-              }
-            }, 200)
-          })
-        } else {
-          // No seeking needed, just play if needed
-          if (isPlaying) {
-            playerRef.current.play()
-          }
-        }
-      })
-
-      playerRef.current.on("play", () => {
-        onStateChange?.(true)
-      })
-
-      playerRef.current.on("pause", () => {
-        onStateChange?.(false)
-      })
-
-      playerRef.current.on("timeupdate", (data: any) => {
-        // Only update if this is still the current video
-        const currentVideoId = (window as any).__vimeoVideoId
-        if (currentVideoId === videoId && data.seconds >= 0 && isFinite(data.seconds)) {
-        onTimeUpdate?.(data.seconds)
-        }
-      })
-
-      playerRef.current.on("ended", () => {
-        onStateChange?.(false)
-        // Auto-play next song when current finishes
-        const { usePlaylistStore } = require("@/lib/store")
-        const store = usePlaylistStore.getState()
-        if (store.currentIndex < store.songs.length - 1) {
-          store.forward()
-        }
-      })
-
-      playerRef.current.getDuration().then((duration: number) => {
-        // Only update if this is still the current video
-        const currentVideoId = (window as any).__vimeoVideoId
-        if (currentVideoId === videoId && duration > 0 && isFinite(duration)) {
-        onDurationChange?.(duration)
-        }
-      })
+      // Wait for iframe to be ready
+      setTimeout(initPlayer, 100)
     }
 
     return () => {
-      // Only cleanup event listeners, don't destroy player
-      // Player will be reused if same video
-    }
-  }, [videoId, currentTime])
-
-  useEffect(() => {
-    if (!isReady || !playerRef.current) return
-
-    const player = playerRef.current
-    try {
-      // Don't change play state if we just seeked (let seek handler do it)
-      player.getCurrentTime().then((currentPos: number) => {
-        const timeSinceSeek = Math.abs(currentPos - lastSeekedTimeRef.current)
-        if (timeSinceSeek < 2) {
-          // Recently seeked, skip this update
-          return
-        }
-        
-        if (isPlaying) {
-          player.play()
-        } else {
+      mounted = false
+      videoIdRef.current = null
+      setIsReady(false)
+      
+      if (player) {
+        try {
           player.pause()
+          player.off("timeupdate")
+          player.off("ended")
+          player.off("error")
+        } catch (e) {
+          // Silently ignore
         }
-      })
-    } catch (e) {
-      // Ignore errors
+      }
+      
+      playerRef.current = null
     }
-  }, [isPlaying, isReady])
+  }, [videoId])
 
   useEffect(() => {
-    if (!isReady || !playerRef.current) return
+    if (!isReady || !playerRef.current || videoIdRef.current !== videoId) return
 
-    const player = playerRef.current
     try {
-      player.setVolume(volume / 100)
+      if (isPlaying) {
+        playerRef.current.play()
+      } else {
+        playerRef.current.pause()
+      }
     } catch (e) {
-      // Ignore errors
+      // Ignore
     }
-  }, [volume, isReady])
+  }, [isPlaying, isReady, videoId])
+
+  useEffect(() => {
+    if (!isReady || !playerRef.current || videoIdRef.current !== videoId) return
+
+    try {
+      playerRef.current.setVolume(volume / 100)
+    } catch (e) {
+      // Ignore
+    }
+  }, [volume, isReady, videoId])
 
   if (!videoId) {
     return (
@@ -202,23 +158,15 @@ export function VimeoPlayer({
   }
 
   return (
-    <div className="w-full h-full">
-      <iframe
-        ref={iframeRef}
-        src={`https://player.vimeo.com/video/${videoId}?api=1&autoplay=0`}
-        width="100%"
-        height="100%"
-        frameBorder="0"
-        allow="autoplay; fullscreen; picture-in-picture"
-        allowFullScreen
-      />
-    </div>
+    <iframe
+      ref={iframeRef}
+      key={videoId}
+      src={`https://player.vimeo.com/video/${videoId}?api=1`}
+      width="100%"
+      height="100%"
+      frameBorder="0"
+      allow="autoplay; fullscreen"
+      allowFullScreen
+    />
   )
 }
-
-declare global {
-  interface Window {
-    Vimeo: any
-  }
-}
-

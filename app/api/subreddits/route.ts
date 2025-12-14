@@ -1,23 +1,40 @@
 import { NextResponse } from "next/server"
-import fs from "fs"
-import path from "path"
+import { readFileSync } from "fs"
+import { join } from "path"
 import yaml from "js-yaml"
 
 /**
- * API route to serve subreddits.yaml data
- * Original: GET /subreddits.json
+ * Get list of all subreddits from YAML file
+ * Reads from subreddits.yaml in project root
  */
 export async function GET() {
   try {
-    const filePath = path.join(process.cwd(), "subreddits.yaml")
-    const fileContents = fs.readFileSync(filePath, "utf8")
-    const data = yaml.load(fileContents) as any
-
-    return NextResponse.json(data)
-  } catch (error) {
-    console.error("Error reading subreddits.yaml:", error)
+    // Path to your YAML file in project root
+    const yamlPath = join(process.cwd(), "subreddits.yaml")
+    
+    // Read and parse YAML file
+    const fileContents = readFileSync(yamlPath, "utf8")
+    const subreddits = yaml.load(fileContents) as any[]
+    
+    // Return the subreddits
+    return NextResponse.json(subreddits)
+  } catch (error: any) {
+    console.error("Error loading subreddits:", error)
+    
+    // If file doesn't exist, return a helpful error
+    if (error.code === "ENOENT") {
+      return NextResponse.json(
+        { 
+          error: "subreddits.yaml not found",
+          message: "Please place your subreddits.yaml file in the project root directory"
+        },
+        { status: 404 }
+      )
+    }
+    
+    // For other errors, return generic error
     return NextResponse.json(
-      { error: "Failed to load subreddits" },
+      { error: "Failed to load subreddits", message: error.message },
       { status: 500 }
     )
   }

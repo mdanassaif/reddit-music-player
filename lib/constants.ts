@@ -1,3 +1,4 @@
+// lib/constants.ts
 /**
  * Application Constants
  * Converted from src/coffee/Constants.coffee

@@ -1,129 +1,118 @@
 "use client"
 
-import { Suspense, useEffect, useState } from "react"
+import { Suspense, useState, useEffect } from "react"
 import { BrowsePanel } from "@/components/browse-panel"
 import { PlaylistPanel } from "@/components/playlist-panel"
-import { SongPanel } from "@/components/song-panel"
-import { Controls } from "@/components/controls"
-import { PageTitle } from "@/components/page-title"
-import { useUrlParams } from "@/lib/hooks/use-url-params"
-import { useKeyboardShortcuts } from "@/lib/hooks/use-keyboard-shortcuts"
-import { useLocalStorageSync } from "@/lib/hooks/use-local-storage-sync"
-import { MessageToast } from "@/components/message-toast"
-import { usePlaylistStore } from "@/lib/store"
+import { PlayerPanel } from "@/components/player-panel"
+import { SongInfoSidebar } from "@/components/song-info-sidebar"
+import { PlayerControls } from "@/components/player-controls"
+import { Header } from "@/components/header"
+import { KeyboardShortcuts } from "@/components/keyboard-shortcuts"
+import { usePlayerStore } from "@/lib/store/player-store"
+import { useInitializeApp } from "@/lib/hooks/use-initialize-app"
+import { usePlayerHydration } from "@/lib/hooks/use-player-hydration"
 
 function HomeContent() {
-  useLocalStorageSync()
-  useUrlParams()
-  useKeyboardShortcuts()
-  const currentSong = usePlaylistStore((state) => state.currentSong)
-  const mobileView = usePlaylistStore((state) => state.mobileView)
-  const setMobileView = usePlaylistStore((state) => state.setMobileView)
-  const [showMobileSongPanel, setShowMobileSongPanel] = useState(false)
+  // Hydrate from localStorage (client-only)
+  usePlayerHydration()
+  
+  // Initialize app (URL params, keyboard shortcuts, etc.)
+  useInitializeApp()
+  
+  const mobileView = usePlayerStore((state) => state.mobileView)
+  const currentSong = usePlayerStore((state) => state.currentSong)
   const [isDesktop, setIsDesktop] = useState(false)
+  const [showKeyboardModal, setShowKeyboardModal] = useState(false)
 
-  // Detect screen size and reset mobileView when switching to desktop
+  // Update page title when song changes
   useEffect(() => {
-    const checkScreenSize = () => {
-      const desktop = window.innerWidth >= 768 // md breakpoint
-      setIsDesktop(desktop)
-      
-      // When switching to desktop, reset mobileView to show all panels
-      if (desktop && mobileView !== "playlist") {
-        // Don't reset if already on playlist, but ensure SongPanel is visible
-        // The CSS will handle visibility, but we can reset mobileView for consistency
-      }
+    if (currentSong) {
+      document.title = `${currentSong.title} - Reddit Music Player`
+    } else {
+      document.title = 'Reddit Music Player'
     }
+  }, [currentSong])
 
-    checkScreenSize()
-    window.addEventListener('resize', checkScreenSize)
-    return () => window.removeEventListener('resize', checkScreenSize)
-  }, [mobileView])
-
-  // Show mobile panel when song is selected or when song tab is active
+  // Detect desktop vs mobile to prevent multiple players
   useEffect(() => {
-    if (currentSong && mobileView === "song") {
-      setShowMobileSongPanel(true)
-    } else if (mobileView !== "song") {
-      setShowMobileSongPanel(false)
+    const checkDesktop = () => {
+      setIsDesktop(window.innerWidth >= 1024) // lg breakpoint
     }
-  }, [currentSong, mobileView])
-
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const params = new URLSearchParams(window.location.search)
-      const error = params.get('error')
-      
-      if (error) {
-        const { usePlaylistStore } = require('@/lib/store')
-        const addMessage = usePlaylistStore.getState().addMessage
-        
-        const errorMessages: Record<string, string> = {
-          auth_failed: 'Authentication failed. Please try again.',
-          invalid_state: 'Invalid authentication state. Please try again.',
-          no_code: 'No authorization code received. Please try again.',
-          token_exchange_failed: 'Failed to exchange authorization code. Please try again.',
-          no_token: 'No access token received. Please try again.',
-          user_fetch_failed: 'Failed to fetch user information. Please try again.',
-          callback_error: 'An error occurred during authentication. Please try again.',
-        }
-        
-        addMessage({
-          type: 'error',
-          text: errorMessages[error] || 'An authentication error occurred.',
-        })
-        
-        window.history.replaceState({}, '', window.location.pathname)
-      }
-    }
+    
+    checkDesktop()
+    window.addEventListener('resize', checkDesktop)
+    return () => window.removeEventListener('resize', checkDesktop)
   }, [])
 
   return (
-    <>
-      <PageTitle />
-      <MessageToast />
-      <main className="flex flex-col md:flex-row h-screen pt-24 md:pt-12 pb-24 md:pb-20 bg-[#0a0a0a]">
-        {/* Browse Panel - Left Sidebar */}
-        <div className={`md:block md:w-[17%] lg:w-[19%] bg-[#111111] border-r border-white/5 overflow-y-auto ${
-          mobileView === "browse" ? "block" : "hidden"
-        }`}>
+    <div className="flex flex-col h-screen bg-background">
+      {/* Global Keyboard Shortcuts */}
+      <KeyboardShortcuts onShowShortcuts={() => setShowKeyboardModal(true)} />
+      
+      {/* Header */}
+      <Header showKeyboardModal={showKeyboardModal} setShowKeyboardModal={setShowKeyboardModal} />
+      
+      {/* Main Content */}
+      <main className="flex flex-1 overflow-hidden">
+        {/* Browse Panel - Left (5% narrower) */}
+        <div 
+          className={`
+            w-full md:w-72 lg:w-80 
+            bg-card border-r border-border 
+            overflow-y-auto
+            ${mobileView === "browse" ? "block" : "hidden md:block"}
+          `}
+        >
           <BrowsePanel />
         </div>
         
-        {/* Playlist Panel - Middle Panel - Medium Gray */}
-        <div className={`md:w-[63%] lg:w-[55%] bg-[#121212] md:border-r border-white/5 overflow-y-auto ${
-          mobileView === "playlist" ? "block w-full" : "hidden md:block"
-        }`}>
+        {/* Playlist Panel - Center */}
+        <div 
+          className={`
+            flex-1 bg-background 
+            overflow-y-auto
+            ${mobileView === "playlist" ? "block" : "hidden md:block"}
+          `}
+        >
           <PlaylistPanel />
         </div>
         
-        {/* Song Panel - Right Panel - Slightly Lighter Gray */}
-        <div className={`
-          bg-[#131313] overflow-y-auto
-          ${mobileView === "song" 
-            ? "fixed inset-0 top-24 bottom-20 z-40 block md:relative md:inset-auto md:top-auto md:bottom-auto md:z-auto md:flex md:flex-1" 
-            : "hidden md:flex flex-1"
-          }
-        `}>
-          <SongPanel onClose={mobileView === "song" ? () => {
-            setMobileView("playlist")
-          } : undefined} />
-        </div>
-        
-        {/* Controls - Always at bottom */}
-        <Controls />
+        {/* Player Panel - Mobile ONLY (conditionally rendered) */}
+        {!isDesktop && (
+          <div 
+            className={`
+              w-full
+              bg-card border-l border-border 
+              overflow-y-auto
+              ${mobileView === "player" ? "block" : "hidden"}
+            `}
+          >
+            <PlayerPanel />
+          </div>
+        )}
+
+        {/* Song Info Sidebar - Desktop ONLY (conditionally rendered) */}
+        {isDesktop && <SongInfoSidebar />}
       </main>
-    </>
+      
+      {/* Player Controls - Bottom */}
+      <PlayerControls />
+    </div>
   )
 }
 
 export default function Home() {
   return (
-    <Suspense fallback={
-      <div className="flex items-center justify-center h-screen bg-[#111]">
-        <div className="text-white">Loading...</div>
-      </div>
-    }>
+    <Suspense 
+      fallback={
+        <div className="flex items-center justify-center h-screen bg-background">
+          <div className="flex flex-col items-center gap-4">
+            <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+            <p className="text-muted-foreground">Loading...</p>
+          </div>
+        </div>
+      }
+    >
       <HomeContent />
     </Suspense>
   )

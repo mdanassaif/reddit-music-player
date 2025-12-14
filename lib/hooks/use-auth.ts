@@ -1,92 +1,47 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useCallback, useMemo } from "react"
 
-interface User {
-  name: string
-  id: string
-  icon_img?: string
-  _json?: any
-}
-
-/**
- * Hook to manage authentication state
- */
 export function useAuth() {
-  const [user, setUser] = useState<User | null>(null)
-  const [loading, setLoading] = useState(true)
+  const isClient = typeof window !== "undefined"
 
-  useEffect(() => {
-    // First, try to read from cookie (faster, no API call)
-    const readUserFromCookie = () => {
-      if (typeof document === 'undefined') return null
-      
-      const cookies = document.cookie.split(';')
-      const userCookie = cookies.find(c => c.trim().startsWith('reddit_user='))
-      
-      if (userCookie) {
-        try {
-          const userJson = decodeURIComponent(userCookie.split('=')[1])
-          return JSON.parse(userJson)
-        } catch (e) {
-          console.error('Failed to parse user cookie:', e)
-        }
-      }
-      return null
-    }
+  const isAuthenticated = useMemo(() => {
+    if (!isClient) return false
+    return !!localStorage.getItem("reddit_access_token")
+  }, [isClient])
 
-    // Check if user is logged in
-    const checkAuth = async () => {
-      // Try cookie first (fast path)
-      const cookieUser = readUserFromCookie()
-      if (cookieUser) {
-        setUser(cookieUser)
-        setLoading(false)
-        // Still verify with API in background
-        verifyWithAPI()
-        return
-      }
+  const username = useMemo(() => {
+    if (!isClient) return null
+    return localStorage.getItem("reddit_username")
+  }, [isClient])
 
-      // No cookie means not logged in - no need to call API
-      // This prevents unnecessary 401 errors in logs
-      setUser(null)
-      setLoading(false)
-    }
+  const login = useCallback(() => {
+    if (!isClient) return
 
-    // Verify with API (for token validation)
-    const verifyWithAPI = async () => {
-      try {
-        const response = await fetch('/api/auth/me')
-        if (response.ok) {
-          const data = await response.json()
-          setUser(data.user)
-        } else {
-          // Token might be expired, clear user
-          setUser(null)
-        }
-      } catch (error) {
-        // Silent fail - cookie might still be valid
-        console.error('Auth verification failed:', error)
-      }
-    }
+    const clientId = process.env.NEXT_PUBLIC_REDDIT_CLIENT_ID || "YOUR_CLIENT_ID"
+    const redirectUri = encodeURIComponent(window.location.origin + "/auth/callback")
+    const scope = "identity,read,vote,submit"
+    const state = Math.random().toString(36).substring(2)
 
-    checkAuth()
-  }, [])
+    localStorage.setItem("reddit_oauth_state", state)
 
-  const login = () => {
-    window.location.href = '/api/auth/login'
-  }
+    const authUrl = `https://www.reddit.com/api/v1/authorize?client_id=${clientId}&response_type=code&state=${state}&redirect_uri=${redirectUri}&duration=permanent&scope=${scope}`
 
-  const logout = () => {
-    window.location.href = '/api/auth/logout'
-  }
+    window.location.href = authUrl
+  }, [isClient])
+
+  const logout = useCallback(() => {
+    if (!isClient) return
+    localStorage.removeItem("reddit_access_token")
+    localStorage.removeItem("reddit_refresh_token")
+    localStorage.removeItem("reddit_username")
+    window.location.reload()
+  }, [isClient])
 
   return {
-    user,
-    loading,
-    isAuthenticated: !!user,
+    isAuthenticated,
+    username,
     login,
     logout,
   }
 }
-
